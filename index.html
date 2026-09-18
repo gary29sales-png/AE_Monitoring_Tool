@@ -96,6 +96,7 @@
     background: var(--navy); color: white; padding: 10px 20px; border-radius: 8px;
     font-size: 13px; display: none; z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   }
+  .toast.toast-error { background: var(--red); font-weight: 600; max-width: 85vw; }
   .toast.show { display: block; }
   .status-banner { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
 
@@ -237,7 +238,7 @@
     <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Logged visits</h4>
     <table>
       <thead><tr>
-        <th>AE</th><th>Dealer</th><th>Date</th><th>Arrival</th><th>Departure</th><th>Purposes</th><th>Status</th>
+        <th>AE</th><th>Dealer</th><th>Date</th><th>Reason</th><th>Arrival</th><th>Departure</th><th>Purposes</th><th>Status</th>
       </tr></thead>
       <tbody id="dashVisitsBody"></tbody>
     </table>
@@ -328,6 +329,10 @@
           <div class="chip selected" data-value="scheduled" onclick="selectVisitType(this)">Scheduled (on call cycle)</div>
           <div class="chip" data-value="adhoc" onclick="selectVisitType(this)">Ad hoc</div>
         </div>
+      </div>
+      <div class="field">
+        <label>Reason for visit (brief context, in your own words)</label>
+        <textarea id="visitReason" placeholder="e.g. Following up on last month's outstanding list, BM requested product training"></textarea>
       </div>
       <div class="field">
         <label>Arrival check-in</label>
@@ -532,11 +537,12 @@ const DEFAULT_AES = ['Denise Redelinghuys', 'Nicole Roux', 'Candidate 1', 'Candi
 
 function uid() { return 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); }
 
-function showToast(msg) {
+function showToast(msg, isError) {
   const t = document.getElementById('toast');
   t.textContent = msg;
+  t.classList.toggle('toast-error', !!isError);
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
+  setTimeout(() => t.classList.remove('show'), isError ? 4500 : 2200);
 }
 
 async function loadData() {
@@ -571,21 +577,24 @@ async function loadData() {
 async function persistAERoster() {
   try {
     const result = await window.storage.set(AE_ROSTER_KEY, JSON.stringify(aeRoster), true);
-    if (!result) showToast('Could not save AE list — storage error');
-  } catch (e) { showToast('Could not save AE list — storage error'); }
+    if (!result) { showToast('AE list was NOT saved — storage error', true); return false; }
+    return true;
+  } catch (e) { console.error('persistAERoster failed:', e); showToast('AE list was NOT saved — ' + (e && e.message ? e.message : 'storage error'), true); return false; }
 }
 
 async function persistSites() {
   try {
     const result = await window.storage.set(SITES_KEY, JSON.stringify(sites), true);
-    if (!result) showToast('Could not save — storage error');
-  } catch (e) { showToast('Could not save — storage error'); }
+    if (!result) { showToast('NOT saved — storage error. Your change may be lost on refresh.', true); return false; }
+    return true;
+  } catch (e) { console.error('persistSites failed:', e); showToast('NOT saved — ' + (e && e.message ? e.message : 'storage error'), true); return false; }
 }
 async function persistBMs() {
   try {
     const result = await window.storage.set(BMS_KEY, JSON.stringify(bms), true);
-    if (!result) showToast('Could not save — storage error');
-  } catch (e) { showToast('Could not save — storage error'); }
+    if (!result) { showToast('NOT saved — storage error. Your change may be lost on refresh.', true); return false; }
+    return true;
+  } catch (e) { console.error('persistBMs failed:', e); showToast('NOT saved — ' + (e && e.message ? e.message : 'storage error'), true); return false; }
 }
 
 function renderAll() {
@@ -653,7 +662,8 @@ async function addAEToRoster() {
   if (!name) return;
   if (aeRoster.includes(name)) { showToast('That AE is already on the list'); return; }
   aeRoster.push(name);
-  await persistAERoster();
+  const saved = await persistAERoster();
+  if (!saved) { aeRoster.pop(); return; }
   input.value = '';
   renderAERosterList();
   showToast('AE added');
@@ -662,8 +672,9 @@ async function removeAEFromRoster(index) {
   const name = aeRoster[index];
   const usageCount = sites.filter(s => s.ae === name).length;
   if (usageCount > 0 && !confirm(`${name} is assigned to ${usageCount} dealer site(s). Remove from the list anyway? Those sites will keep showing "${name}" until reassigned.`)) return;
-  aeRoster.splice(index, 1);
-  await persistAERoster();
+  const removed = aeRoster.splice(index, 1);
+  const saved = await persistAERoster();
+  if (!saved) { aeRoster.splice(index, 0, removed[0]); return; }
   renderAERosterList();
   showToast('AE removed');
 }
@@ -761,9 +772,11 @@ function closeBulkAssignModal() { document.getElementById('bulkAssignModalOverla
 async function applyBulkAssign() {
   const ae = document.getElementById('bulkAssignAE').value;
   if (!ae) { showToast('Select an AE first'); return; }
+  const previousValues = [];
   let count = 0;
-  sites.forEach(s => { if (selectedSiteIds.has(s.id)) { s.ae = ae; count++; } });
-  await persistSites();
+  sites.forEach(s => { if (selectedSiteIds.has(s.id)) { previousValues.push({ site: s, prevAE: s.ae }); s.ae = ae; count++; } });
+  const saved = await persistSites();
+  if (!saved) { previousValues.forEach(p => { p.site.ae = p.prevAE; }); return; }
   selectedSiteIds.clear();
   renderAll();
   closeBulkAssignModal();
@@ -847,13 +860,22 @@ async function saveSite() {
   if (!address) { document.getElementById('siteAddressErr').classList.add('show'); valid = false; }
   if (!valid) return;
 
+  let previousSnapshot = null;
+  let isNew = false;
   if (id) {
     const s = sites.find(x => x.id === id);
+    previousSnapshot = { ...s };
     Object.assign(s, { name, group, region, ae, address, status });
   } else {
+    isNew = true;
     sites.push({ id: uid(), name, group, region, ae, address, status });
   }
-  await persistSites();
+  const saved = await persistSites();
+  if (!saved) {
+    if (isNew) { sites.pop(); }
+    else { const s = sites.find(x => x.id === id); Object.assign(s, previousSnapshot); }
+    return;
+  }
   renderAll();
   closeSiteModal();
   showToast('Dealer site saved');
@@ -865,10 +887,20 @@ async function deleteSite(id) {
     ? `This site has ${linkedBMs} business manager(s) linked to it. Delete anyway? Linked BMs will remain but lose this site from their coverage list.`
     : 'Delete this dealer site?';
   if (!confirm(msg)) return;
+  const removedSite = sites.find(s => s.id === id);
+  const removedIndex = sites.indexOf(removedSite);
+  const bmSnapshots = bms.map(b => ({ b, prevSiteIds: [...(b.siteIds || [])] }));
   sites = sites.filter(s => s.id !== id);
   bms.forEach(b => { b.siteIds = (b.siteIds || []).filter(sid => sid !== id); });
-  await persistSites();
-  await persistBMs();
+  const savedSites = await persistSites();
+  const savedBMs = await persistBMs();
+  if (!savedSites || !savedBMs) {
+    // Roll back both, since a delete needs to be all-or-nothing to avoid an inconsistent state
+    if (!savedSites) sites.splice(removedIndex, 0, removedSite);
+    if (!savedBMs) bmSnapshots.forEach(({ b, prevSiteIds }) => { b.siteIds = prevSiteIds; });
+    renderAll();
+    return;
+  }
   renderAll();
   showToast('Dealer site deleted');
 }
@@ -963,13 +995,22 @@ async function saveBM() {
   if (bmSelectedSiteIds.length === 0) { document.getElementById('bmSiteErr').classList.add('show'); valid = false; }
   if (!valid) return;
 
+  let previousSnapshot = null;
+  let isNew = false;
   if (id) {
     const b = bms.find(x => x.id === id);
+    previousSnapshot = { ...b };
     Object.assign(b, { name, siteIds: [...bmSelectedSiteIds], status });
   } else {
+    isNew = true;
     bms.push({ id: uid(), name, siteIds: [...bmSelectedSiteIds], status });
   }
-  await persistBMs();
+  const saved = await persistBMs();
+  if (!saved) {
+    if (isNew) { bms.pop(); }
+    else { const b = bms.find(x => x.id === id); Object.assign(b, previousSnapshot); }
+    return;
+  }
   renderAll();
   closeBMModal();
   showToast('Business manager saved');
@@ -977,8 +1018,11 @@ async function saveBM() {
 
 async function deleteBM(id) {
   if (!confirm('Delete this business manager?')) return;
+  const removedBM = bms.find(b => b.id === id);
+  const removedIndex = bms.indexOf(removedBM);
   bms = bms.filter(b => b.id !== id);
-  await persistBMs();
+  const saved = await persistBMs();
+  if (!saved) { bms.splice(removedIndex, 0, removedBM); return; }
   renderAll();
   showToast('Business manager deleted');
 }
@@ -1033,9 +1077,13 @@ async function runImport() {
     newBMsCount++;
   });
 
-  await persistSites();
-  await persistBMs();
+  const savedSites = await persistSites();
+  const savedBMs = await persistBMs();
   renderAll();
+  if (!savedSites || !savedBMs) {
+    showToast('Import partly failed to save — check your connection and run Import again (it is safe to re-run, duplicates are skipped).', true);
+    return;
+  }
   showToast(`Imported ${newSitesCount} sites, ${newBMsCount} BMs (skipped ${skippedSitesCount} duplicate sites, ${skippedBMsCount} duplicate BMs)`);
 }
 
@@ -1058,8 +1106,28 @@ let stepOrder = ['ae', 'site', 'arrival', 'purposes', 'fields', 'outcome'];
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-async function persistVisits() { try { const r = await window.storage.set(VISITS_KEY, JSON.stringify(visits), true); if (!r) showToast('Could not save visit — storage error'); } catch (e) { showToast('Could not save visit — storage error'); } }
-async function persistFollowups() { try { const r = await window.storage.set(FOLLOWUPS_KEY, JSON.stringify(followups), true); if (!r) showToast('Could not save follow-up — storage error'); } catch (e) { showToast('Could not save follow-up — storage error'); } }
+async function persistVisits() {
+  try {
+    const r = await window.storage.set(VISITS_KEY, JSON.stringify(visits), true);
+    if (!r) { showToast('Visit was NOT saved — storage error. Do not close this page, try Submit again.', true); return false; }
+    return true;
+  } catch (e) {
+    console.error('persistVisits failed:', e);
+    showToast('Visit was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '. Do not close this page, try Submit again.', true);
+    return false;
+  }
+}
+async function persistFollowups() {
+  try {
+    const r = await window.storage.set(FOLLOWUPS_KEY, JSON.stringify(followups), true);
+    if (!r) { showToast('Follow-up was NOT saved — storage error.', true); return false; }
+    return true;
+  } catch (e) {
+    console.error('persistFollowups failed:', e);
+    showToast('Follow-up was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '.', true);
+    return false;
+  }
+}
 
 function populateAESelects() {
   const opts = '<option value="">Select your name...</option>' + aeRoster.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
@@ -1085,7 +1153,7 @@ function renderStepper(current) {
 
 function initNewVisit() {
   currentVisit = {
-    id: uid(), aeName: '', siteId: '', visitType: 'scheduled',
+    id: uid(), aeName: '', siteId: '', visitType: 'scheduled', visitReason: '',
     purposes: [], purposeData: {},
     arrival: null, departure: null,
     outcomeStatus: 'completed',
@@ -1094,6 +1162,7 @@ function initNewVisit() {
   };
   document.getElementById('aeSelect').value = '';
   document.getElementById('siteSearch').value = '';
+  document.getElementById('visitReason').value = '';
   document.getElementById('arrivalStatus').innerHTML = '<span class="status-pill pending">Not checked in yet</span>';
   document.getElementById('departureStatus').innerHTML = '<span class="status-pill pending">Not checked out yet</span>';
   goToStep('ae');
@@ -1336,6 +1405,7 @@ function renderFollowUpFields() {
 
 async function submitVisit() {
   collectPurposeFields();
+  currentVisit.visitReason = document.getElementById('visitReason').value.trim();
   if (!currentVisit.departure) {
     showToast('Check out (capture location) before submitting');
     return;
@@ -1346,8 +1416,18 @@ async function submitVisit() {
   const site = sites.find(s => s.id === currentVisit.siteId);
   currentVisit.geoFlag = null;
 
+  const submitBtn = document.getElementById('submitVisitBtn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving...'; }
+
   visits.push(currentVisit);
-  await persistVisits();
+  const saved = await persistVisits();
+  if (!saved) {
+    // Roll back the in-memory add so a retry doesn't create a duplicate, and stop here —
+    // the person stays on the outcome step with everything they entered still in place.
+    visits.pop();
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Submit visit'; }
+    return;
+  }
 
   // Handle follow-up creation
   let createdFollowupId = null;
@@ -1366,10 +1446,13 @@ async function submitVisit() {
       createdAt: new Date().toISOString(),
     };
     followups.push(fu);
-    await persistFollowups();
-    createdFollowupId = fu.id;
+    const fuSaved = await persistFollowups();
+    if (fuSaved) createdFollowupId = fu.id;
+    // Note: the visit itself is already safely saved at this point even if the follow-up save fails —
+    // only the follow-up would need re-creating, which the person can still do from My Diary later if needed.
   }
 
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Submit visit'; }
   document.getElementById('doneSummary').textContent = (site ? site.name : 'Dealer') + ' — ' + new Date().toLocaleDateString();
   const followupActionEl = document.getElementById('doneFollowupAction');
   followupActionEl.innerHTML = createdFollowupId ? `<button class="secondary" onclick="downloadFollowupICS('${createdFollowupId}')">Add follow-up to Outlook</button>` : '';
@@ -1499,11 +1582,13 @@ function closeFollowupModal() { document.getElementById('followupModalOverlay').
 async function closeOutFollowup(fuId) {
   const fu = followups.find(f => f.id === fuId);
   if (!fu) return;
+  const previousSnapshot = { ...fu };
   fu.status = 'closed';
   fu.closeoutNotes = document.getElementById('fuCloseNotes') ? document.getElementById('fuCloseNotes').value : '';
   fu.closeoutStatus = document.getElementById('fuCloseStatus') ? document.getElementById('fuCloseStatus').value : 'completed';
   fu.closedAt = new Date().toISOString();
-  await persistFollowups();
+  const saved = await persistFollowups();
+  if (!saved) { Object.assign(fu, previousSnapshot); return; }
   closeFollowupModal();
   renderDiary();
   showToast('Follow-up closed out');
@@ -1558,6 +1643,7 @@ function renderDashboard() {
         <td>${escapeHtml(v.aeName)}</td>
         <td>${site ? escapeHtml(site.name) : '<em>Deleted site</em>'}</td>
         <td>${v.arrival && v.arrival.time ? new Date(v.arrival.time).toLocaleDateString() : '—'}</td>
+        <td style="max-width:200px; white-space:normal;">${v.visitReason ? escapeHtml(v.visitReason) : '—'}</td>
         <td>${arrivalTime}</td>
         <td>${departureTime}</td>
         <td>${escapeHtml(purposesText)}</td>
