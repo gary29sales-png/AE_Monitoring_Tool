@@ -118,73 +118,55 @@
   .toast.show { display: block; }
   .status-banner { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
 
-  /* --- AE Field Tool: "Field Ops" treatment — bold, high-contrast, built for outdoor phone use --- */
-  #panel-newvisit .field label, #panel-diary .field label {
-    text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; font-size: 11.5px; color: var(--navy);
-  }
+  /* --- Unified soft styling — AE screens match the same Modern SaaS look as admin --- */
   #panel-newvisit select, #panel-newvisit input[type=text],
   #panel-diary select, #panel-diary input[type=text] {
-    border: 2px solid #C7CAD4; border-radius: 4px; padding: 12px; font-size: 15px; box-shadow: none;
-  }
-  #panel-newvisit select:focus, #panel-newvisit input[type=text]:focus,
-  #panel-diary select:focus, #panel-diary input[type=text]:focus {
-    border-color: var(--navy); box-shadow: none;
+    padding: 11px 12px; font-size: 14px;
   }
 
-  .card { background: white; border: 2px solid var(--navy); border-radius: 4px; padding: 18px; margin-bottom: 14px; box-shadow: none; }
+  .card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(20,20,43,0.04), 0 6px 20px rgba(20,20,43,0.05); }
   input[type=date], input[type=number], textarea {
-    width: 100%; padding: 12px; border: 2px solid #C7CAD4; border-radius: 4px; font-size: 15px; background: white; color: var(--text); font-family: inherit;
+    width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; background: white; color: var(--text); font-family: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  input[type=date]:focus, input[type=number]:focus, textarea:focus { outline: none; border-color: var(--navy); }
+  input[type=date]:focus, input[type=number]:focus, textarea:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 3px rgba(37,53,111,0.1); }
   textarea { resize: vertical; min-height: 64px; }
 
   #panel-newvisit button, #panel-diary button {
-    width: 100%; padding: 16px 18px; font-size: 14px; border-radius: 4px;
-    font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; box-shadow: none;
+    width: 100%; padding: 13px 18px; font-size: 14.5px;
   }
-  #panel-newvisit button:active, #panel-diary button:active { transform: scale(0.98); }
-  #panel-newvisit button.secondary, #panel-diary button.secondary { background: white; color: var(--navy); border: 2px solid var(--navy); }
-  #panel-newvisit button.ghost, #panel-diary button.ghost { background: none; color: var(--text-muted); border: 2px solid var(--border); font-weight: 700; }
-  #panel-newvisit button.small, #panel-diary button.small { width: auto; padding: 8px 14px; font-size: 12px; }
-  #panel-newvisit button.danger, #panel-diary button.danger { border-width: 2px; font-weight: 800; }
+  #panel-newvisit button.small, #panel-diary button.small { width: auto; padding: 7px 12px; font-size: 12.5px; }
 
   .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
-    border: 2px solid var(--navy); border-radius: 4px; padding: 14px 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 12px; padding: 13px 12px; font-size: 13.5px;
     cursor: pointer; background: white; flex: 1 1 calc(50% - 4px); text-align: center;
-    font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy);
+    font-weight: 500; color: var(--text); transition: border-color 0.15s, background 0.15s;
   }
-  .chip.selected { background: var(--navy); color: white; }
+  .chip.selected { background: var(--navy); color: white; border-color: var(--navy); }
 
-  .site-result { padding: 14px 12px; border: 2px solid var(--border); border-radius: 4px; margin-bottom: 8px; cursor: pointer; }
-  .site-result:hover { border-color: var(--navy); background: #FAFBFC; }
-  .site-result .name { font-weight: 800; font-size: 14px; color: var(--navy); text-transform: uppercase; letter-spacing: 0.2px; }
-  .site-result .meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-weight: 600; }
+  .site-result { padding: 13px 14px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .site-result:hover { border-color: var(--navy); background: #FAFBFD; }
+  .site-result .name { font-weight: 600; font-size: 14px; color: var(--navy); }
+  .site-result .meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 
   .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
   .status-pill.good { background: #EAF3EC; color: #1F7A3E; }
   .status-pill.warn { background: #FBEAEA; color: var(--red); }
   .status-pill.pending { background: #F2F3F5; color: var(--text-muted); }
 
-  #panel-newvisit .status-pill, #panel-diary .status-pill {
-    font-size: 12px; padding: 8px 14px; border-radius: 4px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px;
-  }
-  #panel-newvisit .status-pill.good, #panel-diary .status-pill.good { background: #1E7B4D; color: white; }
-  #panel-newvisit .status-pill.warn, #panel-diary .status-pill.warn { background: var(--red); color: white; }
-  #panel-newvisit .status-pill.pending, #panel-diary .status-pill.pending { background: #E8E9ED; color: #5A5F6E; }
+  .purpose-block { border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 12px; background: #FBFBFC; }
+  .purpose-block h4 { margin: 0 0 12px; font-size: 13.5px; color: var(--navy); font-weight: 600; }
 
-  .purpose-block { border: 2px solid var(--navy); border-radius: 4px; padding: 16px; margin-bottom: 12px; }
-  .purpose-block h4 { margin: 0 0 12px; font-size: 13.5px; color: var(--navy); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 800; }
-
-  .diary-item { background: white; border: 2px solid var(--navy); border-radius: 4px; padding: 14px 16px; margin-bottom: 10px; border-left: 6px solid var(--navy); box-shadow: none; }
-  .diary-item.overdue { border-left-color: var(--red); border-color: var(--red); }
-  .diary-item .dname { font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.2px; }
-  .diary-item .dmeta { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 600; }
-  .diary-item .ddate { font-size: 11.5px; font-weight: 800; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .diary-item { background: white; border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; border-left: 3px solid var(--navy); box-shadow: 0 1px 2px rgba(20,20,43,0.04), 0 4px 14px rgba(20,20,43,0.04); }
+  .diary-item.overdue { border-left-color: var(--red); }
+  .diary-item .dname { font-weight: 600; font-size: 14px; }
+  .diary-item .dmeta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .diary-item .ddate { font-size: 11.5px; font-weight: 600; margin-top: 8px; color: var(--text-muted); }
   .diary-item .ddate.overdue-text { color: var(--red); }
 
   .stepper-progress { display: flex; gap: 4px; margin-bottom: 16px; }
-  .stepper-progress .seg { height: 6px; flex: 1; background: #DADCE2; border-radius: 0; }
+  .stepper-progress .seg { height: 4px; flex: 1; background: #E8E9EE; border-radius: 2px; }
   .stepper-progress .seg.done { background: var(--red); }
   .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
   .tabs { flex-wrap: wrap; }
