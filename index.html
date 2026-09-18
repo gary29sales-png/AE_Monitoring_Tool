@@ -339,7 +339,7 @@
     </div>
     <table>
       <thead><tr>
-        <th>Name</th><th>Dealer site(s)</th><th>Region(s)</th><th>Status</th><th></th>
+        <th>Name</th><th>Dealer site(s)</th><th>Region(s)</th><th>Birthday</th><th>Status</th><th></th>
       </tr></thead>
       <tbody id="bmsTableBody"></tbody>
     </table>
@@ -477,6 +477,7 @@
     </div>
     <div id="reminderForm" class="card" style="display:none;"></div>
     <div id="queryLogForm" class="card" style="display:none;"></div>
+    <div id="birthdaysTodaySection"></div>
     <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Pending follow-ups &amp; reminders</h4>
     <div id="diaryList"></div>
     <h4 style="color:var(--navy); font-size:14px; margin:24px 0 10px;">Recent logged queries</h4>
@@ -556,6 +557,10 @@
       <div id="bmSelectedSites" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
     </div>
     <div class="field">
+      <label>Birthday (optional — shows as a reminder on the AE's diary each year)</label>
+      <input type="date" id="bmBirthday">
+    </div>
+    <div class="field">
       <label>Status</label>
       <select id="bmStatus"><option value="active">Active</option><option value="inactive">Inactive</option></select>
     </div>
@@ -614,7 +619,7 @@ const IMPORT_DATA = {"sites": [{"name": "Witbank Ford New", "address": "CNR FRAN
 let sites = [];
 let bms = [];
 let aeRoster = [];
-let visits = [], followups = [], escalations = [], queryLogs = [];
+let visits = [], followups = [], escalations = [], queryLogs = [], birthdayAcks = [];
 const SITES_KEY = 'ae-kpa:dealer-sites';
 const BMS_KEY = 'ae-kpa:business-managers';
 const AE_ROSTER_KEY = 'ae-kpa:ae-roster';
@@ -653,6 +658,7 @@ async function loadData() {
   try { const r = await window.storage.get(FOLLOWUPS_KEY, true).catch(() => null); followups = r ? JSON.parse(r.value) : []; } catch (e) { followups = []; }
   try { const r = await window.storage.get(ESCALATIONS_KEY, true).catch(() => null); escalations = r ? JSON.parse(r.value) : []; } catch (e) { escalations = []; }
   try { const r = await window.storage.get(QUERYLOGS_KEY, true).catch(() => null); queryLogs = r ? JSON.parse(r.value) : []; } catch (e) { queryLogs = []; }
+  try { const r = await window.storage.get(BIRTHDAYACKS_KEY, true).catch(() => null); birthdayAcks = r ? JSON.parse(r.value) : []; } catch (e) { birthdayAcks = []; }
 
   banner.textContent = 'Shared data — visible to anyone using this tool. ' + sites.length + ' dealer site(s), ' + bms.length + ' business manager(s), ' + visits.length + ' visit(s) logged.';
   renderAll();
@@ -896,6 +902,7 @@ function renderBMs() {
       <td><strong>${escapeHtml(b.name)}</strong></td>
       <td>${siteNames}</td>
       <td>${escapeHtml(regions)}</td>
+      <td>${b.birthday ? formatBirthdayDisplay(b.birthday) : '—'}</td>
       <td><span class="badge ${b.status}">${b.status === 'active' ? 'Active' : 'Inactive'}</span></td>
       <td><div class="actions">
         <button class="small secondary" onclick="editBM('${b.id}')">Edit</button>
@@ -1022,6 +1029,7 @@ function openBMModal() {
   document.getElementById('bmSiteSearch').value = '';
   bmSelectedSiteIds = [];
   document.getElementById('bmStatus').value = 'active';
+  document.getElementById('bmBirthday').value = '';
   clearBMErrors();
   renderBMSiteOptions();
   renderBMSelectedSites();
@@ -1036,6 +1044,7 @@ function editBM(id) {
   document.getElementById('bmSiteSearch').value = '';
   bmSelectedSiteIds = [...(b.siteIds || [])];
   document.getElementById('bmStatus').value = b.status;
+  document.getElementById('bmBirthday').value = b.birthday || '';
   clearBMErrors();
   renderBMSiteOptions();
   renderBMSelectedSites();
@@ -1093,6 +1102,7 @@ function renderBMSelectedSites() {
 async function saveBM() {
   const name = document.getElementById('bmName').value.trim();
   const status = document.getElementById('bmStatus').value;
+  const birthday = document.getElementById('bmBirthday').value;
   const id = document.getElementById('bmId').value;
 
   clearBMErrors();
@@ -1106,10 +1116,10 @@ async function saveBM() {
   if (id) {
     const b = bms.find(x => x.id === id);
     previousSnapshot = { ...b };
-    Object.assign(b, { name, siteIds: [...bmSelectedSiteIds], status });
+    Object.assign(b, { name, siteIds: [...bmSelectedSiteIds], status, birthday });
   } else {
     isNew = true;
-    bms.push({ id: uid(), name, siteIds: [...bmSelectedSiteIds], status });
+    bms.push({ id: uid(), name, siteIds: [...bmSelectedSiteIds], status, birthday });
   }
   const saved = await persistBMs();
   if (!saved) {
@@ -1215,6 +1225,7 @@ const VISITS_KEY = 'ae-kpa:visits';
 const FOLLOWUPS_KEY = 'ae-kpa:followups';
 const ESCALATIONS_KEY = 'ae-kpa:escalations';
 const QUERYLOGS_KEY = 'ae-kpa:query-logs';
+const BIRTHDAYACKS_KEY = 'ae-kpa:birthday-acks';
 
 const PURPOSES = [
   { id: 'query', label: 'Query resolution' },
@@ -1230,6 +1241,22 @@ let currentVisit = null; // in-progress visit object being built
 let stepOrder = ['ae', 'site', 'arrival', 'purposes', 'fields', 'outcome'];
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+function formatBirthdayDisplay(dateStr) {
+  if (!dateStr) return '—';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthIdx = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  return (monthNames[monthIdx] || parts[1]) + ' ' + day;
+}
+function isBirthdayToday(dateStr) {
+  if (!dateStr) return false;
+  const today = new Date();
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return false;
+  return parseInt(parts[1], 10) === (today.getMonth() + 1) && parseInt(parts[2], 10) === today.getDate();
+}
 
 async function persistVisits() {
   try {
@@ -1272,6 +1299,17 @@ async function persistQueryLogs() {
   } catch (e) {
     console.error('persistQueryLogs failed:', e);
     showToast('Query log was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '.', true);
+    return false;
+  }
+}
+async function persistBirthdayAcks() {
+  try {
+    const r = await window.storage.set(BIRTHDAYACKS_KEY, JSON.stringify(birthdayAcks), true);
+    if (!r) { showToast('Could not save — storage error.', true); return false; }
+    return true;
+  } catch (e) {
+    console.error('persistBirthdayAcks failed:', e);
+    showToast('Could not save — ' + (e && e.message ? e.message : 'storage error') + '.', true);
     return false;
   }
 }
@@ -2000,7 +2038,43 @@ function renderQueryLogList() {
   }).join('');
 }
 
+function renderBirthdaysToday() {
+  const ae = document.getElementById('diaryAESelect').value;
+  const container = document.getElementById('birthdaysTodaySection');
+  if (!ae) { container.innerHTML = ''; return; }
+  const myActiveSiteIds = new Set(sites.filter(s => s.status === 'active' && s.ae === ae).map(s => s.id));
+  const todaysBMs = bms.filter(b => b.status === 'active' && isBirthdayToday(b.birthday) && (b.siteIds || []).some(sid => myActiveSiteIds.has(sid)));
+  if (todaysBMs.length === 0) { container.innerHTML = ''; return; }
+  const today = todayStr();
+  container.innerHTML = `
+    <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Birthdays today</h4>
+    ${todaysBMs.map(b => {
+      const linkedSite = sites.find(s => (b.siteIds || []).includes(s.id) && myActiveSiteIds.has(s.id));
+      const acked = birthdayAcks.some(a => a.bmId === b.id && a.date === today && a.aeName === ae);
+      return `
+        <div class="diary-item">
+          <div class="dname">${escapeHtml(b.name)}</div>
+          <div class="dmeta">${linkedSite ? escapeHtml(linkedSite.name) : ''}</div>
+          ${acked
+            ? `<span class="status-pill good" style="margin-top:8px;">Wished</span>`
+            : `<button class="small secondary" style="margin-top:8px;" onclick="markBirthdayWished('${b.id}')">Mark as wished</button>`}
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+async function markBirthdayWished(bmId) {
+  const ae = document.getElementById('diaryAESelect').value;
+  const ack = { id: uid(), bmId: bmId, aeName: ae, date: todayStr(), createdAt: new Date().toISOString() };
+  birthdayAcks.push(ack);
+  const saved = await persistBirthdayAcks();
+  if (!saved) { birthdayAcks.pop(); return; }
+  renderBirthdaysToday();
+  showToast('Nice — marked as wished');
+}
+
 function renderDiary() {
+  renderBirthdaysToday();
   renderQueryLogList();
   const ae = document.getElementById('diaryAESelect').value;
   const container = document.getElementById('diaryList');
