@@ -169,6 +169,11 @@
   .stepper-progress .seg { height: 4px; flex: 1; background: #E8E9EE; border-radius: 2px; }
   .stepper-progress .seg.done { background: var(--red); }
   .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+  .bm-select-wrapper { display: flex; flex-direction: column; gap: 6px; }
+  .bm-add-toggle { font-size: 12px; color: var(--navy); cursor: pointer; font-weight: 600; align-self: flex-start; }
+  .bm-add-toggle:hover { text-decoration: underline; }
+  .bm-add-row { display: flex; gap: 6px; align-items: center; }
+  .bm-add-row input { flex: 1; }
   .tabs { flex-wrap: wrap; }
   .mode-switch { display: flex; gap: 4px; background: var(--bg); border-radius: 8px; padding: 3px; }
   .mode-btn { background: none; border: none; color: var(--text-muted); padding: 7px 14px; border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; width: auto; }
@@ -282,6 +287,15 @@
       <tbody id="dashFollowupsBody"></tbody>
     </table>
     <div class="empty" id="dashFollowupsEmpty" style="display:none;">No follow-ups on record.</div>
+
+    <h4 style="color:var(--navy); font-size:14px; margin:24px 0 10px;">Escalations</h4>
+    <table>
+      <thead><tr>
+        <th>AE</th><th>Dealer</th><th>Reason</th><th>Urgency</th><th>Date</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody id="dashEscalationsBody"></tbody>
+    </table>
+    <div class="empty" id="dashEscalationsEmpty" style="display:none;">No escalations on record.</div>
   </div>
 
   <div class="panel active" id="panel-sites">
@@ -339,6 +353,14 @@
     <!-- Step 1: Site select -->
     <div id="step-site" class="card" style="display:none;">
       <div class="field">
+        <label>Filter by region</label>
+        <select id="visitFilterRegion" onchange="renderSiteResults()"><option value="">All regions</option></select>
+      </div>
+      <div class="field">
+        <label>Filter by group</label>
+        <select id="visitFilterGroup" onchange="renderSiteResults()"><option value="">All groups</option></select>
+      </div>
+      <div class="field">
         <label>Search dealer site</label>
         <input type="text" id="siteSearch" placeholder="Type dealer name..." oninput="renderSiteResults()">
       </div>
@@ -355,7 +377,7 @@
       </div>
       <div class="field">
         <label>Visit type</label>
-        <div class="chip-row">
+        <div class="chip-row" id="visitTypeRow">
           <div class="chip selected" data-value="scheduled" onclick="selectVisitType(this)">Scheduled (on call cycle)</div>
           <div class="chip" data-value="adhoc" onclick="selectVisitType(this)">Ad hoc</div>
         </div>
@@ -395,7 +417,7 @@
     <div id="step-outcome" class="card" style="display:none;">
       <div class="field">
         <label>Visit status</label>
-        <div class="chip-row">
+        <div class="chip-row" id="outcomeStatusRow">
           <div class="chip selected" data-value="completed" onclick="selectOutcomeStatus(this)">Completed as planned</div>
           <div class="chip" data-value="partial" onclick="selectOutcomeStatus(this)">Partially completed</div>
           <div class="chip" data-value="not_completed" onclick="selectOutcomeStatus(this)">Not completed</div>
@@ -408,12 +430,20 @@
       </div>
       <div class="field">
         <label>Set a follow-up?</label>
-        <div class="chip-row">
+        <div class="chip-row" id="followUpChoiceRow">
           <div class="chip" data-value="no" onclick="selectFollowUpChoice(this)">No follow-up needed</div>
           <div class="chip selected" data-value="yes" onclick="selectFollowUpChoice(this)">Yes, schedule one</div>
         </div>
       </div>
       <div id="followUpFields"></div>
+      <div class="field">
+        <label>Escalate anything from this visit to management?</label>
+        <div class="chip-row" id="escalationChoiceRow">
+          <div class="chip selected" data-value="no" onclick="selectEscalationChoice(this)">No escalation needed</div>
+          <div class="chip" data-value="yes" onclick="selectEscalationChoice(this)">Yes, escalate</div>
+        </div>
+      </div>
+      <div id="escalationFields"></div>
       <button onclick="submitVisit()" id="submitVisitBtn">Submit visit</button>
       <button class="ghost small" style="margin-top:10px;" onclick="goToStep('fields')">Back</button>
     </div>
@@ -423,6 +453,7 @@
       <div style="font-size:15px; font-weight:600; color:var(--green); margin-bottom:8px;">Visit logged</div>
       <div style="font-size:13px; color:var(--text-muted); margin-bottom:16px;" id="doneSummary"></div>
       <div id="doneFollowupAction" style="margin-bottom:10px;"></div>
+      <div id="doneEscalationNote" style="margin-bottom:10px;"></div>
       <button onclick="resetVisitFlow()">Log another visit</button>
     </div>
   </div>
@@ -565,7 +596,7 @@ const IMPORT_DATA = {"sites": [{"name": "Witbank Ford New", "address": "CNR FRAN
 let sites = [];
 let bms = [];
 let aeRoster = [];
-let visits = [], followups = [];
+let visits = [], followups = [], escalations = [];
 const SITES_KEY = 'ae-kpa:dealer-sites';
 const BMS_KEY = 'ae-kpa:business-managers';
 const AE_ROSTER_KEY = 'ae-kpa:ae-roster';
@@ -602,6 +633,7 @@ async function loadData() {
   } catch (e) { aeRoster = [...DEFAULT_AES]; }
   try { const r = await window.storage.get(VISITS_KEY, true).catch(() => null); visits = r ? JSON.parse(r.value) : []; } catch (e) { visits = []; }
   try { const r = await window.storage.get(FOLLOWUPS_KEY, true).catch(() => null); followups = r ? JSON.parse(r.value) : []; } catch (e) { followups = []; }
+  try { const r = await window.storage.get(ESCALATIONS_KEY, true).catch(() => null); escalations = r ? JSON.parse(r.value) : []; } catch (e) { escalations = []; }
 
   banner.textContent = 'Shared data — visible to anyone using this tool. ' + sites.length + ' dealer site(s), ' + bms.length + ' business manager(s), ' + visits.length + ' visit(s) logged.';
   renderAll();
@@ -719,6 +751,11 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : str;
   return div.innerHTML;
+}
+function modeLabel(mode) {
+  if (mode === 'telephonic') return 'Telephonic';
+  if (mode === 'email') return 'Email';
+  return 'Dealer visit';
 }
 
 function activeBMCountForSite(siteId) {
@@ -1150,6 +1187,7 @@ async function runImport() {
 
 const VISITS_KEY = 'ae-kpa:visits';
 const FOLLOWUPS_KEY = 'ae-kpa:followups';
+const ESCALATIONS_KEY = 'ae-kpa:escalations';
 
 const PURPOSES = [
   { id: 'query', label: 'Query resolution' },
@@ -1188,6 +1226,17 @@ async function persistFollowups() {
     return false;
   }
 }
+async function persistEscalations() {
+  try {
+    const r = await window.storage.set(ESCALATIONS_KEY, JSON.stringify(escalations), true);
+    if (!r) { showToast('Escalation was NOT saved — storage error.', true); return false; }
+    return true;
+  } catch (e) {
+    console.error('persistEscalations failed:', e);
+    showToast('Escalation was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '.', true);
+    return false;
+  }
+}
 
 function populateAESelects() {
   const opts = '<option value="">Select your name...</option>' + aeRoster.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
@@ -1213,14 +1262,22 @@ function goToStep(stepName) {
   document.getElementById('step-done').style.display = 'none';
   document.getElementById('step-' + stepName).style.display = 'block';
   renderStepper(stepName);
-  if (stepName === 'site') renderSiteResults();
+  if (stepName === 'site') { populateVisitFilters(); renderSiteResults(); }
   if (stepName === 'purposes') renderPurposeChips();
   if (stepName === 'fields') renderPurposeFields();
-  if (stepName === 'outcome') renderFollowUpFields();
+  if (stepName === 'outcome') { renderFollowUpFields(); renderEscalationFields(); }
 }
 function renderStepper(current) {
   const idx = stepOrder.indexOf(current);
   document.getElementById('stepperProgress').innerHTML = stepOrder.map((s, i) => `<div class="seg ${i <= idx ? 'done' : ''}"></div>`).join('');
+}
+
+function resetChipRow(rowId, defaultValue) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  row.querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.value === defaultValue);
+  });
 }
 
 function initNewVisit() {
@@ -1229,13 +1286,19 @@ function initNewVisit() {
     purposes: [], purposeData: {},
     arrival: null, departure: null,
     outcomeStatus: 'completed',
-    followUp: null, followUpChoice: 'yes',
+    followUp: null, followUpChoice: 'yes', escalationChoice: 'no',
     isFollowUpClose: false,
   };
   document.getElementById('siteSearch').value = '';
   document.getElementById('visitReason').value = '';
   document.getElementById('arrivalStatus').innerHTML = '<span class="status-pill pending">Not checked in yet</span>';
   document.getElementById('departureStatus').innerHTML = '<span class="status-pill pending">Not checked out yet</span>';
+  resetChipRow('visitTypeRow', 'scheduled');
+  resetChipRow('outcomeStatusRow', 'completed');
+  resetChipRow('followUpChoiceRow', 'yes');
+  resetChipRow('escalationChoiceRow', 'no');
+  document.getElementById('followUpFields').innerHTML = '';
+  document.getElementById('escalationFields').innerHTML = '';
 
   let remembered = null;
   try { remembered = localStorage.getItem('ae-kpa:remembered-ae'); } catch (e) {}
@@ -1267,20 +1330,38 @@ document.addEventListener('DOMContentLoaded', () => {
   if (aeStepBtn) aeStepBtn.onclick = goFromAEStep;
 });
 
+function populateVisitFilters() {
+  const myActiveSites = sites.filter(s => s.status === 'active' && s.ae === currentVisit.aeName);
+  const regions = [...new Set(myActiveSites.map(s => s.region).filter(Boolean))].sort();
+  const groups = [...new Set(myActiveSites.map(s => s.group).filter(Boolean))].sort();
+  const regionSel = document.getElementById('visitFilterRegion');
+  const groupSel = document.getElementById('visitFilterGroup');
+  const curRegion = regionSel.value, curGroup = groupSel.value;
+  regionSel.innerHTML = '<option value="">All regions</option>' + regions.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('');
+  groupSel.innerHTML = '<option value="">All groups</option>' + groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+  regionSel.value = regions.includes(curRegion) ? curRegion : '';
+  groupSel.value = groups.includes(curGroup) ? curGroup : '';
+}
+
 function renderSiteResults() {
   const q = document.getElementById('siteSearch').value.trim().toLowerCase();
+  const region = document.getElementById('visitFilterRegion').value;
+  const group = document.getElementById('visitFilterGroup').value;
   const container = document.getElementById('siteResults');
-  let candidates = sites.filter(s => s.status === 'active');
+  // Strict: an AE only ever sees dealers assigned to them — AEs don't cover each other's regions
+  let candidates = sites.filter(s => s.status === 'active' && s.ae === currentVisit.aeName);
+  if (region) candidates = candidates.filter(s => s.region === region);
+  if (group) candidates = candidates.filter(s => s.group === group);
   if (q) candidates = candidates.filter(s => s.name.toLowerCase().includes(q));
   candidates = candidates.slice(0, 25);
   if (candidates.length === 0) {
-    container.innerHTML = '<div class="empty">No matching dealer sites</div>';
+    container.innerHTML = '<div class="empty">No matching dealer sites assigned to you. Ask your manager to check your dealer assignments in Admin.</div>';
     return;
   }
   container.innerHTML = candidates.map(s => `
     <div class="site-result" onclick="selectSite('${s.id}')">
       <div class="name">${escapeHtml(s.name)}</div>
-      <div class="meta">${escapeHtml(s.region || 'No region')} · ${escapeHtml(s.ae || 'Unassigned')}</div>
+      <div class="meta">${escapeHtml(s.region || 'No region')}${s.group ? ' · ' + escapeHtml(s.group) : ''}</div>
     </div>
   `).join('');
 }
@@ -1372,18 +1453,72 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function siteBMOptions() {
-  const bmList = bms.filter(b => (b.siteIds || []).includes(currentVisit.siteId) && b.status === 'active');
-  return bmList;
+  const currentSite = sites.find(s => s.id === currentVisit.siteId);
+  if (!currentSite) return [];
+  if (!currentSite.group) {
+    // No group on file for this site — fall back to site-only scoping rather than guessing
+    return bms.filter(b => (b.siteIds || []).includes(currentSite.id) && b.status === 'active').map(b => ({ bm: b, atThisSite: true }));
+  }
+  const groupSiteIds = new Set(sites.filter(s => s.group === currentSite.group).map(s => s.id));
+  return bms
+    .filter(b => b.status === 'active' && (b.siteIds || []).some(sid => groupSiteIds.has(sid)))
+    .map(b => ({ bm: b, atThisSite: (b.siteIds || []).includes(currentSite.id) }));
+}
+
+function siteGroupSites() {
+  const currentSite = sites.find(s => s.id === currentVisit.siteId);
+  if (!currentSite) return [];
+  if (!currentSite.group) return [currentSite.id];
+  return sites.filter(s => s.group === currentSite.group).map(s => s.id);
+}
+
+let bmWidgetCounter = 0;
+function buildBMSelectHtml() {
+  const bmOptions = siteBMOptions();
+  const wrapperId = 'bmw_' + (bmWidgetCounter++);
+  const optionsHtml = bmOptions.map(o => {
+    const suffix = o.atThisSite ? '' : ' (elsewhere in group)';
+    return `<option value="${o.bm.id}">${escapeHtml(o.bm.name)}${suffix}</option>`;
+  }).join('');
+  return `
+    <div class="bm-select-wrapper" id="${wrapperId}">
+      <select data-field="bmId">
+        <option value="">Select BM (optional)...</option>
+        ${optionsHtml}
+      </select>
+      <div class="bm-add-toggle" onclick="toggleBMAddRow('${wrapperId}')">+ Add a BM not listed here</div>
+      <div class="bm-add-row" id="${wrapperId}_row" style="display:none;">
+        <input type="text" id="${wrapperId}_input" placeholder="New BM full name">
+        <button type="button" class="small secondary" onclick="saveInlineBM('${wrapperId}')">Save</button>
+        <button type="button" class="small ghost" onclick="toggleBMAddRow('${wrapperId}')">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+function toggleBMAddRow(wrapperId) {
+  const row = document.getElementById(wrapperId + '_row');
+  row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+  if (row.style.display === 'flex') document.getElementById(wrapperId + '_input').focus();
+}
+async function saveInlineBM(wrapperId) {
+  const input = document.getElementById(wrapperId + '_input');
+  const name = input.value.trim();
+  if (!name) { showToast('Enter the BM\'s name first'); return; }
+  const newBM = { id: uid(), name: name, siteIds: siteGroupSites(), status: 'active' };
+  bms.push(newBM);
+  const saved = await persistBMs();
+  if (!saved) { bms.pop(); return; }
+  showToast('BM added — select them from the list below');
+  collectPurposeFields();
+  renderPurposeFields();
 }
 
 function renderPurposeFields() {
   const container = document.getElementById('purposeFieldsContainer');
-  const bmOptions = siteBMOptions();
-  const bmSelectHtml = `<select data-field="bmId"><option value="">Select BM (optional)...</option>${bmOptions.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select>`;
 
   const blocks = {
     query: `
-      <div class="field">${'<label>Business manager</label>' + bmSelectHtml}</div>
+      <div class="field">${'<label>Business manager</label>' + buildBMSelectHtml()}</div>
       <div class="field"><label>Query type</label><input type="text" data-field="queryType" placeholder="e.g. claims query, policy admin"></div>
       <div class="field"><label>Resolution status</label>
         <select data-field="resolutionStatus"><option value="resolved">Resolved</option><option value="pending">Pending</option><option value="escalated">Escalated</option></select>
@@ -1395,14 +1530,14 @@ function renderPurposeFields() {
       <div class="field"><label>Items still open</label><input type="number" data-field="itemsOpen" min="0" placeholder="0"></div>
       <div class="field"><label>Reason for items still open</label><input type="text" data-field="openReason" placeholder="e.g. awaiting docs from customer"></div>`,
     training: `
-      <div class="field">${'<label>Business manager trained</label>' + bmSelectHtml}</div>
+      <div class="field">${'<label>Business manager trained</label>' + buildBMSelectHtml()}</div>
       <div class="field"><label>Topic</label><input type="text" data-field="topic" placeholder="e.g. SafeGuard product update"></div>
       <div class="field"><label>Duration (minutes)</label><input type="number" data-field="duration" min="0" placeholder="30"></div>
       <div class="field"><label>Planned or ad hoc</label>
         <select data-field="plannedAdhoc"><option value="planned">Planned</option><option value="adhoc">Ad hoc</option></select>
       </div>`,
     coaching: `
-      <div class="field">${'<label>Business manager coached</label>' + bmSelectHtml}</div>
+      <div class="field">${'<label>Business manager coached</label>' + buildBMSelectHtml()}</div>
       <div class="field"><label>Skill area</label>
         <select data-field="skillArea"><option value="pitch">Pitch structure</option><option value="objection">Objection handling</option><option value="penetration">Penetration technique</option><option value="other">Other</option></select>
       </div>
@@ -1467,15 +1602,31 @@ function collectPurposeFields() {
 }
 
 function selectOutcomeStatus(el) {
-  document.querySelectorAll('#step-outcome .chip[data-value="completed"], #step-outcome .chip[data-value="partial"], #step-outcome .chip[data-value="not_completed"]').forEach(c => c.classList.remove('selected'));
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
   currentVisit.outcomeStatus = el.dataset.value;
 }
 function selectFollowUpChoice(el) {
-  document.querySelectorAll('#step-outcome .chip[data-value="no"], #step-outcome .chip[data-value="yes"]').forEach(c => c.classList.remove('selected'));
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
   currentVisit.followUpChoice = el.dataset.value;
   renderFollowUpFields();
+}
+function selectEscalationChoice(el) {
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  currentVisit.escalationChoice = el.dataset.value;
+  renderEscalationFields();
+}
+function renderEscalationFields() {
+  const container = document.getElementById('escalationFields');
+  if (currentVisit.escalationChoice !== 'yes') { container.innerHTML = ''; return; }
+  container.innerHTML = `
+    <div class="field"><label>What needs management attention</label><textarea id="escReason" placeholder="Describe what needs to be escalated"></textarea></div>
+    <div class="field"><label>Urgency</label>
+      <select id="escUrgency"><option value="normal">Normal</option><option value="urgent">Urgent</option></select>
+    </div>
+  `;
 }
 function renderFollowUpFields() {
   const container = document.getElementById('followUpFields');
@@ -1488,7 +1639,7 @@ function renderFollowUpFields() {
     <div class="field"><label>Target date</label><input type="date" id="fuDate" value="${todayStr()}"></div>
     <div class="field"><label>Target time</label><input type="time" id="fuTime" value="09:00"></div>
     <div class="field"><label>Planned mode</label>
-      <select id="fuMode"><option value="visit">Dealer visit</option><option value="telephonic">Telephonic</option></select>
+      <select id="fuMode"><option value="visit">Dealer visit</option><option value="telephonic">Telephonic</option><option value="email">Email</option></select>
     </div>
     <div class="field"><label>Reason / what needs to happen</label><textarea id="fuReason" placeholder="One line on what the follow-up needs to cover"></textarea></div>
   `;
@@ -1543,10 +1694,34 @@ async function submitVisit() {
     // only the follow-up would need re-creating, which the person can still do from My Diary later if needed.
   }
 
+  // Handle escalation creation
+  let escalationCreated = false;
+  if (currentVisit.escalationChoice === 'yes') {
+    const esc = {
+      id: uid(),
+      aeName: currentVisit.aeName,
+      siteId: currentVisit.siteId,
+      originVisitId: currentVisit.id,
+      reason: document.getElementById('escReason') ? document.getElementById('escReason').value : '',
+      urgency: document.getElementById('escUrgency') ? document.getElementById('escUrgency').value : 'normal',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+    };
+    escalations.push(esc);
+    const escSaved = await persistEscalations();
+    escalationCreated = escSaved;
+    // As with follow-ups, the visit itself is already safely saved even if this save fails —
+    // only the escalation would need re-raising.
+  }
+
   if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Submit visit'; }
   document.getElementById('doneSummary').textContent = (site ? site.name : 'Dealer') + ' — ' + new Date().toLocaleDateString();
   const followupActionEl = document.getElementById('doneFollowupAction');
   followupActionEl.innerHTML = createdFollowupId ? `<button class="secondary" onclick="downloadFollowupICS('${createdFollowupId}')">Add follow-up to Outlook</button>` : '';
+  const escalationNoteEl = document.getElementById('doneEscalationNote');
+  escalationNoteEl.innerHTML = escalationCreated
+    ? `<span class="status-pill warn">Escalation logged — visible to management</span>`
+    : (currentVisit.escalationChoice === 'yes' ? `<span class="status-pill warn">Escalation could not be saved — try again from My Diary</span>` : '');
   stepOrder.forEach(s => { document.getElementById('step-' + s).style.display = 'none'; });
   document.getElementById('step-done').style.display = 'block';
   showToast('Visit logged successfully');
@@ -1578,7 +1753,7 @@ function downloadFollowupICS(fuId) {
   const startDate = new Date(fu.targetDate + 'T' + (fu.targetTime || '09:00') + ':00');
   const endDate = new Date(startDate.getTime() + 30 * 60000);
   const dtEnd = endDate.getFullYear().toString() + String(endDate.getMonth()+1).padStart(2,'0') + String(endDate.getDate()).padStart(2,'0') + 'T' + String(endDate.getHours()).padStart(2,'0') + String(endDate.getMinutes()).padStart(2,'0') + '00';
-  const location = fu.mode === 'telephonic' ? 'Telephonic' : (site ? site.address : '');
+  const location = (fu.mode === 'telephonic' || fu.mode === 'email') ? modeLabel(fu.mode) : (site ? site.address : '');
   const summary = `Follow-up: ${dealerName} — ${purposeLabel}`;
   const description = fu.reason || '';
 
@@ -1630,7 +1805,7 @@ function renderDiary() {
     return `
       <div class="diary-item ${overdue ? 'overdue' : ''}">
         <div class="dname">${site ? escapeHtml(site.name) : 'Dealer'}</div>
-        <div class="dmeta">${labels[f.purpose] || f.purpose} · ${f.mode === 'telephonic' ? 'Telephonic' : 'Dealer visit'}</div>
+        <div class="dmeta">${labels[f.purpose] || f.purpose} · ${modeLabel(f.mode)}</div>
         ${f.reason ? `<div class="dmeta">${escapeHtml(f.reason)}</div>` : ''}
         <div class="ddate ${overdue ? 'overdue-text' : ''}">${overdue ? 'Overdue — was due' : 'Due'} ${f.targetDate}${f.targetTime ? ' at ' + f.targetTime : ''}</div>
         <div style="display:flex; gap:8px; margin-top:8px;">
@@ -1649,10 +1824,12 @@ function openFollowupCloseout(fuId) {
   const overlay = document.getElementById('followupModalOverlay');
   const body = document.getElementById('fuModalBody');
 
-  if (fu.mode === 'telephonic') {
+  if (fu.mode === 'telephonic' || fu.mode === 'email') {
+    const label = fu.mode === 'telephonic' ? 'Call outcome' : 'Email outcome';
+    const placeholder = fu.mode === 'telephonic' ? 'What was discussed / resolved' : 'What was sent / resolved via email';
     body.innerHTML = `
       <div class="field"><label>Dealer site</label><div style="font-weight:600;">${site ? escapeHtml(site.name) : ''}</div></div>
-      <div class="field"><label>Call outcome</label><textarea id="fuCloseNotes" placeholder="What was discussed / resolved"></textarea></div>
+      <div class="field"><label>${label}</label><textarea id="fuCloseNotes" placeholder="${placeholder}"></textarea></div>
       <div class="field"><label>Status</label>
         <select id="fuCloseStatus"><option value="completed">Completed as planned</option><option value="partial">Partially completed</option><option value="not_completed">Not completed</option></select>
       </div>
@@ -1790,12 +1967,54 @@ function renderDashboard() {
         <td>${escapeHtml(f.aeName)}</td>
         <td>${site ? escapeHtml(site.name) : '<em>Deleted site</em>'}</td>
         <td>${labels[f.purpose] || f.purpose}</td>
-        <td>${f.mode === 'telephonic' ? 'Telephonic' : 'Dealer visit'}</td>
+        <td>${modeLabel(f.mode)}</td>
         <td>${f.targetDate || '—'}${f.targetTime ? ' ' + f.targetTime : ''}</td>
         <td><span class="badge ${f.status === 'closed' ? 'active' : (overdue ? '' : 'inactive')}" style="${overdue ? 'background:#FBEAEA;color:var(--red);' : ''}">${statusText}</span></td>
       </tr>
     `;
   }).join('');
+
+  const myEscalations = escalations.filter(e => !curAEFilter || e.aeName === curAEFilter);
+  myEscalations.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const eBody = document.getElementById('dashEscalationsBody');
+  document.getElementById('dashEscalationsEmpty').style.display = myEscalations.length ? 'none' : 'block';
+  eBody.innerHTML = myEscalations.map(e => {
+    const site = sites.find(s => s.id === e.siteId);
+    const isOpen = e.status !== 'resolved';
+    return `
+      <tr>
+        <td>${escapeHtml(e.aeName)}</td>
+        <td>${site ? escapeHtml(site.name) : '<em>Deleted site</em>'}</td>
+        <td style="max-width:240px; white-space:normal;">${escapeHtml(e.reason || '—')}</td>
+        <td><span class="badge ${e.urgency === 'urgent' ? 'inactive' : 'active'}" style="${e.urgency === 'urgent' ? 'background:#FBEAEA;color:var(--red);' : ''}">${e.urgency === 'urgent' ? 'Urgent' : 'Normal'}</span></td>
+        <td>${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : '—'}</td>
+        <td><span class="badge ${isOpen ? 'inactive' : 'active'}">${isOpen ? 'Open' : 'Resolved'}</span></td>
+        <td>${isOpen ? `<button class="small secondary" onclick="resolveEscalation('${e.id}')">Mark resolved</button>` : `<button class="small ghost" onclick="reopenEscalation('${e.id}')">Reopen</button>`}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function resolveEscalation(escId) {
+  const e = escalations.find(x => x.id === escId);
+  if (!e) return;
+  const prevStatus = e.status;
+  e.status = 'resolved';
+  e.resolvedAt = new Date().toISOString();
+  const saved = await persistEscalations();
+  if (!saved) { e.status = prevStatus; delete e.resolvedAt; return; }
+  renderDashboard();
+  showToast('Escalation marked resolved');
+}
+async function reopenEscalation(escId) {
+  const e = escalations.find(x => x.id === escId);
+  if (!e) return;
+  const prevStatus = e.status;
+  e.status = 'open';
+  const saved = await persistEscalations();
+  if (!saved) { e.status = prevStatus; return; }
+  renderDashboard();
+  showToast('Escalation reopened');
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
