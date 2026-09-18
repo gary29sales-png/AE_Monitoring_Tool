@@ -44,6 +44,7 @@
     header .sub { font-size: 11px; }
     .mode-switch { order: 3; width: 100%; }
     .mode-btn { flex: 1; text-align: center; }
+    #chartsRow { grid-template-columns: 1fr !important; }
   }
   .tag { background: var(--navy); color: white; font-size: 11px; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
 
@@ -270,7 +271,25 @@
         <input type="date" id="dashDateFrom">
         <input type="date" id="dashDateTo">
       </div>
+      <button class="secondary" onclick="exportDashboardCSV()">Export CSV</button>
     </div>
+
+    <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Performance summary</h4>
+    <div class="hint" style="margin-bottom:12px;">Call cycle % and this month's escalation count always reflect the current calendar month, regardless of the date filters above. Everything else below respects the filters.</div>
+
+    <div id="kpiCardsRow" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-bottom:20px;"></div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:24px;" id="chartsRow">
+      <div class="card" style="margin-bottom:0;">
+        <div style="font-size:13px; font-weight:600; color:var(--navy); margin-bottom:10px;">Call cycle % by AE (this month)</div>
+        <div id="callCycleChart"></div>
+      </div>
+      <div class="card" style="margin-bottom:0;">
+        <div style="font-size:13px; font-weight:600; color:var(--navy); margin-bottom:10px;">Visit purpose breakdown</div>
+        <div id="purposeChart"></div>
+      </div>
+    </div>
+
     <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Logged visits</h4>
     <table>
       <thead><tr>
@@ -2198,6 +2217,220 @@ function computeLocationMatch(visit, site) {
   return { label: `Matched — ${distText}`, pillClass: 'good' };
 }
 
+// ---------------- DASHBOARD ANALYTICS ----------------
+function getVisitedBMIds(visit) {
+  const ids = new Set();
+  Object.values(visit.purposeData || {}).forEach(data => {
+    if (data && data.bmId) ids.add(data.bmId);
+  });
+  return ids;
+}
+
+function computeCallCycleStats() {
+  const now = new Date();
+  const monthPrefix = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  return aeRoster.map(ae => {
+    const aeSiteIds = new Set(sites.filter(s => s.status === 'active' && s.ae === ae).map(s => s.id));
+    const rosterBMIds = new Set(bms.filter(b => b.status === 'active' && (b.siteIds || []).some(sid => aeSiteIds.has(sid))).map(b => b.id));
+    const visitedBMIds = new Set();
+    visits.forEach(v => {
+      if (v.aeName !== ae) return;
+      const visitMonth = v.arrival && v.arrival.time ? v.arrival.time.slice(0, 7) : '';
+      if (visitMonth !== monthPrefix) return;
+      // A BM visited more than once this month still only counts once — Set naturally collapses duplicates
+      getVisitedBMIds(v).forEach(id => { if (rosterBMIds.has(id)) visitedBMIds.add(id); });
+    });
+    const total = rosterBMIds.size;
+    const visitedCount = visitedBMIds.size;
+    const pct = total > 0 ? Math.round((visitedCount / total) * 100) : null;
+    return { ae, visitedCount, total, pct };
+  });
+}
+
+function computePurposeBreakdown(filteredVisits) {
+  const counts = {};
+  filteredVisits.forEach(v => { (v.purposes || []).forEach(p => { counts[p] = (counts[p] || 0) + 1; }); });
+  return counts;
+}
+
+function computeLocationMatchSummary(filteredVisits) {
+  let matched = 0, mismatch = 0, noData = 0;
+  filteredVisits.forEach(v => {
+    const site = sites.find(s => s.id === v.siteId);
+    const r = computeLocationMatch(v, site);
+    if (r.pillClass === 'good') matched++;
+    else if (r.pillClass === 'warn') mismatch++;
+    else noData++;
+  });
+  return { matched, mismatch, noData };
+}
+
+function computeVisitFrequency(filteredVisits) {
+  const days = new Set();
+  filteredVisits.forEach(v => { if (v.arrival && v.arrival.time) days.add(v.arrival.time.slice(0, 10)); });
+  const total = filteredVisits.length;
+  const dayCount = days.size || 1;
+  const avgPerDay = total / dayCount;
+  return { total, dayCount, avgPerDay, avgPerWeek: avgPerDay * 7 };
+}
+
+function computeFollowupSummary(curAEFilter) {
+  const mine = followups.filter(f => !curAEFilter || f.aeName === curAEFilter);
+  const outstanding = mine.filter(f => f.status === 'pending').length;
+  const completed = mine.filter(f => f.status === 'closed').length;
+  const overdue = mine.filter(f => f.status === 'pending' && f.targetDate && f.targetDate < todayStr()).length;
+  return { outstanding, completed, overdue };
+}
+
+function computeEscalationsThisMonth(curAEFilter) {
+  const now = new Date();
+  const monthPrefix = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const mine = escalations.filter(e => (!curAEFilter || e.aeName === curAEFilter) && e.createdAt && e.createdAt.slice(0, 7) === monthPrefix);
+  return { total: mine.length, open: mine.filter(e => e.status !== 'resolved').length, urgent: mine.filter(e => e.urgency === 'urgent').length };
+}
+
+function barRowHtml(label, pct, displayValue, color) {
+  const safePct = Math.max(0, Math.min(100, pct));
+  return `
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+        <span>${escapeHtml(label)}</span><span style="font-weight:600; color:var(--text);">${escapeHtml(displayValue)}</span>
+      </div>
+      <div style="background:#F0F1F4; border-radius:6px; height:10px; overflow:hidden;">
+        <div style="background:${color || 'var(--navy)'}; width:${safePct}%; height:100%;"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCallCycleChart(curAEFilter) {
+  const stats = computeCallCycleStats().filter(s => !curAEFilter || s.ae === curAEFilter);
+  const container = document.getElementById('callCycleChart');
+  if (stats.length === 0) { container.innerHTML = '<div class="empty">No AEs on roster.</div>'; return; }
+  container.innerHTML = stats.map(s => {
+    if (s.total === 0) return barRowHtml(s.ae, 0, 'No BMs allocated', '#D0D2D8');
+    const color = s.pct >= 80 ? '#1F7A3E' : (s.pct >= 50 ? '#BA7517' : 'var(--red)');
+    return barRowHtml(s.ae, s.pct, s.pct + '% (' + s.visitedCount + '/' + s.total + ')', color);
+  }).join('');
+}
+
+function renderPurposeChart(filteredVisits) {
+  const labels = { query: 'Query resolution', outstanding: 'Outstanding list', training: 'Product training', coaching: 'Sales coaching', review: 'Performance review', admin: 'Relationship / admin', intel: 'Market intelligence' };
+  const counts = computePurposeBreakdown(filteredVisits);
+  const container = document.getElementById('purposeChart');
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) { container.innerHTML = '<div class="empty">No visits in the selected range.</div>'; return; }
+  const max = Math.max(...entries.map(e => e[1]));
+  container.innerHTML = entries.map(([k, v]) => barRowHtml(labels[k] || k, max > 0 ? (v / max) * 100 : 0, String(v))).join('');
+}
+
+function kpiCardHtml(label, value, sub) {
+  return `
+    <div style="background:#FAFBFD; border:1px solid var(--border); border-radius:12px; padding:14px;">
+      <div style="font-size:11px; color:var(--text-muted); font-weight:600; margin-bottom:6px;">${label}</div>
+      <div style="font-size:22px; font-weight:700; color:var(--navy);">${value}</div>
+      ${sub ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${sub}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderKPICards(filteredVisits, curAEFilter) {
+  const container = document.getElementById('kpiCardsRow');
+  const freq = computeVisitFrequency(filteredVisits);
+  const loc = computeLocationMatchSummary(filteredVisits);
+  const fu = computeFollowupSummary(curAEFilter);
+  const esc = computeEscalationsThisMonth(curAEFilter);
+  const callCycleStats = computeCallCycleStats().filter(s => !curAEFilter || s.ae === curAEFilter).filter(s => s.total > 0);
+  const avgCallCyclePct = callCycleStats.length ? Math.round(callCycleStats.reduce((sum, s) => sum + s.pct, 0) / callCycleStats.length) : 0;
+
+  container.innerHTML = [
+    kpiCardHtml('Call cycle (this month)', avgCallCyclePct + '%', curAEFilter ? '' : 'Average across all AEs'),
+    kpiCardHtml('Visits (filtered range)', freq.total, 'Avg ' + freq.avgPerDay.toFixed(1) + '/day · ' + freq.avgPerWeek.toFixed(1) + '/week'),
+    kpiCardHtml('Follow-ups outstanding', fu.outstanding, fu.overdue + ' overdue'),
+    kpiCardHtml('Follow-ups completed', fu.completed, ''),
+    kpiCardHtml('Location matched', loc.matched, loc.mismatch + ' mismatched · ' + loc.noData + ' no data'),
+    kpiCardHtml('Escalations (this month)', esc.total, esc.open + ' still open' + (esc.urgent ? ' · ' + esc.urgent + ' urgent' : '')),
+  ].join('');
+}
+
+function csvEscape(val) {
+  const s = String(val == null ? '' : val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function downloadCSV(content, filename) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportDashboardCSV() {
+  const curAEFilter = document.getElementById('dashAEFilter').value;
+  const dateFrom = document.getElementById('dashDateFrom').value;
+  const dateTo = document.getElementById('dashDateTo').value;
+  const labels = { query: 'Query resolution', outstanding: 'Outstanding list', training: 'Product training', coaching: 'Sales coaching', review: 'Performance review', admin: 'Relationship / admin', intel: 'Market intelligence' };
+
+  let filteredVisits = visits.filter(v => {
+    if (curAEFilter && v.aeName !== curAEFilter) return false;
+    const visitDate = v.arrival && v.arrival.time ? v.arrival.time.slice(0, 10) : '';
+    if (dateFrom && visitDate < dateFrom) return false;
+    if (dateTo && visitDate > dateTo) return false;
+    return true;
+  });
+
+  const freq = computeVisitFrequency(filteredVisits);
+  const loc = computeLocationMatchSummary(filteredVisits);
+  const fu = computeFollowupSummary(curAEFilter);
+  const esc = computeEscalationsThisMonth(curAEFilter);
+
+  let csv = '';
+  csv += 'AE KPA Dashboard Export\n';
+  csv += 'Generated,' + new Date().toLocaleString() + '\n';
+  csv += 'Filters,AE=' + (curAEFilter || 'All') + ',From=' + (dateFrom || '(none)') + ',To=' + (dateTo || '(none)') + '\n\n';
+
+  csv += 'SUMMARY\nMetric,Value\n';
+  csv += 'Total visits (filtered),' + freq.total + '\n';
+  csv += 'Avg visits per day,' + freq.avgPerDay.toFixed(2) + '\n';
+  csv += 'Avg visits per week,' + freq.avgPerWeek.toFixed(2) + '\n';
+  csv += 'Location matched,' + loc.matched + '\n';
+  csv += 'Location mismatched,' + loc.mismatch + '\n';
+  csv += 'Location no data,' + loc.noData + '\n';
+  csv += 'Follow-ups outstanding,' + fu.outstanding + '\n';
+  csv += 'Follow-ups completed,' + fu.completed + '\n';
+  csv += 'Follow-ups overdue,' + fu.overdue + '\n';
+  csv += 'Escalations this month,' + esc.total + '\n';
+  csv += 'Escalations open,' + esc.open + '\n\n';
+
+  csv += 'CALL CYCLE BY AE (this calendar month)\nAE,BMs Visited,Total BMs,Percent\n';
+  computeCallCycleStats().forEach(s => {
+    csv += csvEscape(s.ae) + ',' + s.visitedCount + ',' + s.total + ',' + (s.pct === null ? 'N/A' : s.pct + '%') + '\n';
+  });
+  csv += '\n';
+
+  csv += 'VISIT PURPOSE BREAKDOWN\nPurpose,Count\n';
+  Object.entries(computePurposeBreakdown(filteredVisits)).forEach(([k, v]) => { csv += csvEscape(labels[k] || k) + ',' + v + '\n'; });
+  csv += '\n';
+
+  csv += 'VISIT DETAIL\nAE,Dealer,Date,Reason,Arrival,Departure,Location Match,Purposes,Status\n';
+  filteredVisits.forEach(v => {
+    const site = sites.find(s => s.id === v.siteId);
+    const locResult = computeLocationMatch(v, site);
+    const purposesText = (v.purposes || []).map(p => labels[p] || p).join('; ');
+    const row = [
+      v.aeName, site ? site.name : '', v.arrival && v.arrival.time ? new Date(v.arrival.time).toLocaleDateString() : '',
+      v.visitReason || '', v.arrival && v.arrival.time ? new Date(v.arrival.time).toLocaleString() : '',
+      v.departure && v.departure.time ? new Date(v.departure.time).toLocaleString() : '',
+      locResult.label, purposesText, v.outcomeStatus
+    ].map(csvEscape).join(',');
+    csv += row + '\n';
+  });
+
+  downloadCSV(csv, 'ae-kpa-dashboard-export.csv');
+}
+
 function renderDashboard() {
   const aeFilterSel = document.getElementById('dashAEFilter');
   const curAEFilter = aeFilterSel.value;
@@ -2305,6 +2538,10 @@ function renderDashboard() {
       </tr>
     `;
   }).join('');
+
+  renderKPICards(filteredVisits, curAEFilter);
+  renderCallCycleChart(curAEFilter);
+  renderPurposeChart(filteredVisits);
 }
 
 async function resolveEscalation(escId) {
