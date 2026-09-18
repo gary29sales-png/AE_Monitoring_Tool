@@ -296,6 +296,15 @@
       <tbody id="dashEscalationsBody"></tbody>
     </table>
     <div class="empty" id="dashEscalationsEmpty" style="display:none;">No escalations on record.</div>
+
+    <h4 style="color:var(--navy); font-size:14px; margin:24px 0 10px;">Telephonic queries logged</h4>
+    <table>
+      <thead><tr>
+        <th>AE</th><th>Dealer</th><th>BM</th><th>Notes</th><th>Date</th><th>Status</th>
+      </tr></thead>
+      <tbody id="dashQueryLogsBody"></tbody>
+    </table>
+    <div class="empty" id="dashQueryLogsEmpty" style="display:none;">No telephonic queries logged yet.</div>
   </div>
 
   <div class="panel active" id="panel-sites">
@@ -462,7 +471,16 @@
     <div class="field" style="margin-bottom:14px;">
       <select id="diaryAESelect" onchange="renderDiary()"><option value="">Select your name to view your diary...</option></select>
     </div>
+    <div style="display:flex; gap:8px; margin-bottom:16px;">
+      <button class="secondary" onclick="openReminderForm()">+ Add a reminder</button>
+      <button class="secondary" onclick="openQueryLogForm()">+ Log a telephonic query</button>
+    </div>
+    <div id="reminderForm" class="card" style="display:none;"></div>
+    <div id="queryLogForm" class="card" style="display:none;"></div>
+    <h4 style="color:var(--navy); font-size:14px; margin:4px 0 10px;">Pending follow-ups &amp; reminders</h4>
     <div id="diaryList"></div>
+    <h4 style="color:var(--navy); font-size:14px; margin:24px 0 10px;">Recent logged queries</h4>
+    <div id="queryLogList"></div>
   </div>
 </div>
 
@@ -596,7 +614,7 @@ const IMPORT_DATA = {"sites": [{"name": "Witbank Ford New", "address": "CNR FRAN
 let sites = [];
 let bms = [];
 let aeRoster = [];
-let visits = [], followups = [], escalations = [];
+let visits = [], followups = [], escalations = [], queryLogs = [];
 const SITES_KEY = 'ae-kpa:dealer-sites';
 const BMS_KEY = 'ae-kpa:business-managers';
 const AE_ROSTER_KEY = 'ae-kpa:ae-roster';
@@ -634,6 +652,7 @@ async function loadData() {
   try { const r = await window.storage.get(VISITS_KEY, true).catch(() => null); visits = r ? JSON.parse(r.value) : []; } catch (e) { visits = []; }
   try { const r = await window.storage.get(FOLLOWUPS_KEY, true).catch(() => null); followups = r ? JSON.parse(r.value) : []; } catch (e) { followups = []; }
   try { const r = await window.storage.get(ESCALATIONS_KEY, true).catch(() => null); escalations = r ? JSON.parse(r.value) : []; } catch (e) { escalations = []; }
+  try { const r = await window.storage.get(QUERYLOGS_KEY, true).catch(() => null); queryLogs = r ? JSON.parse(r.value) : []; } catch (e) { queryLogs = []; }
 
   banner.textContent = 'Shared data — visible to anyone using this tool. ' + sites.length + ' dealer site(s), ' + bms.length + ' business manager(s), ' + visits.length + ' visit(s) logged.';
   renderAll();
@@ -1195,6 +1214,7 @@ async function runImport() {
 const VISITS_KEY = 'ae-kpa:visits';
 const FOLLOWUPS_KEY = 'ae-kpa:followups';
 const ESCALATIONS_KEY = 'ae-kpa:escalations';
+const QUERYLOGS_KEY = 'ae-kpa:query-logs';
 
 const PURPOSES = [
   { id: 'query', label: 'Query resolution' },
@@ -1241,6 +1261,17 @@ async function persistEscalations() {
   } catch (e) {
     console.error('persistEscalations failed:', e);
     showToast('Escalation was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '.', true);
+    return false;
+  }
+}
+async function persistQueryLogs() {
+  try {
+    const r = await window.storage.set(QUERYLOGS_KEY, JSON.stringify(queryLogs), true);
+    if (!r) { showToast('Query log was NOT saved — storage error.', true); return false; }
+    return true;
+  } catch (e) {
+    console.error('persistQueryLogs failed:', e);
+    showToast('Query log was NOT saved — ' + (e && e.message ? e.message : 'storage error') + '.', true);
     return false;
   }
 }
@@ -1792,7 +1823,185 @@ function downloadFollowupICS(fuId) {
   showToast('Calendar file downloaded — open it to add to Outlook');
 }
 
+// ---------------- DIARY: standalone reminders & telephonic query log ----------------
+let reminderSelectedSiteId = null;
+let queryLogSelectedSiteId = null;
+let queryLogSelectedBmId = null;
+
+function diaryAE() { return document.getElementById('diaryAESelect').value; }
+
+function dealerPickerHtml(inputId, resultsId) {
+  return `
+    <div class="field">
+      <label>Dealer site</label>
+      <input type="text" id="${inputId}" placeholder="Type dealer name..." oninput="renderDealerPickerResults('${inputId}', '${resultsId}')">
+      <div id="${resultsId}" style="margin-top:6px;"></div>
+    </div>
+  `;
+}
+
+function renderDealerPickerResults(inputId, resultsId) {
+  const ae = diaryAE();
+  const q = document.getElementById(inputId).value.trim().toLowerCase();
+  const container = document.getElementById(resultsId);
+  if (!ae) { container.innerHTML = '<div class="hint">Select your name above first.</div>'; return; }
+  let candidates = sites.filter(s => s.status === 'active' && s.ae === ae);
+  if (q) candidates = candidates.filter(s => s.name.toLowerCase().includes(q));
+  candidates = candidates.slice(0, 15);
+  const targetVar = inputId === 'reminderSiteSearch' ? 'reminderSelectedSiteId' : 'queryLogSelectedSiteId';
+  const onSelect = inputId === 'reminderSiteSearch' ? 'selectReminderSite' : 'selectQueryLogSite';
+  if (candidates.length === 0) { container.innerHTML = '<div class="empty">No matching dealers assigned to you</div>'; return; }
+  container.innerHTML = candidates.map(s => `
+    <div class="site-result" onclick="${onSelect}('${s.id}')">
+      <div class="name">${escapeHtml(s.name)}</div>
+      <div class="meta">${escapeHtml(s.region || 'No region')}${s.group ? ' · ' + escapeHtml(s.group) : ''}</div>
+    </div>
+  `).join('');
+}
+
+function openReminderForm() {
+  if (!diaryAE()) { showToast('Select your name first'); return; }
+  document.getElementById('queryLogForm').style.display = 'none';
+  reminderSelectedSiteId = null;
+  const labels = { query: 'Query resolution', outstanding: 'Outstanding list', training: 'Product training', coaching: 'Sales coaching', review: 'Performance review', admin: 'Relationship / admin', intel: 'Market intelligence' };
+  const form = document.getElementById('reminderForm');
+  form.innerHTML = `
+    <h4 style="color:var(--navy); font-size:14px; margin:0 0 12px;">Add a reminder</h4>
+    ${dealerPickerHtml('reminderSiteSearch', 'reminderSiteResults')}
+    <div id="reminderSelectedSiteDisplay" class="hint"></div>
+    <div class="field"><label>Relates to</label>
+      <select id="reminderPurpose">${Object.entries(labels).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Target date</label><input type="date" id="reminderDate" value="${todayStr()}"></div>
+    <div class="field"><label>Target time</label><input type="time" id="reminderTime" value="09:00"></div>
+    <div class="field"><label>Planned mode</label>
+      <select id="reminderMode"><option value="visit">Dealer visit</option><option value="telephonic">Telephonic</option><option value="email">Email</option></select>
+    </div>
+    <div class="field"><label>Reason / what needs to happen</label><textarea id="reminderReason" placeholder="What this reminder is for"></textarea></div>
+    <div class="err" id="reminderErr" style="display:none;">Select a dealer site first</div>
+    <button onclick="saveStandaloneReminder()">Save reminder</button>
+    <button class="ghost small" style="margin-top:8px;" onclick="document.getElementById('reminderForm').style.display='none';">Cancel</button>
+  `;
+  form.style.display = 'block';
+  renderDealerPickerResults('reminderSiteSearch', 'reminderSiteResults');
+}
+function selectReminderSite(siteId) {
+  reminderSelectedSiteId = siteId;
+  const s = sites.find(x => x.id === siteId);
+  document.getElementById('reminderSelectedSiteDisplay').textContent = s ? ('Selected: ' + s.name) : '';
+  document.getElementById('reminderSiteResults').innerHTML = '';
+  document.getElementById('reminderSiteSearch').value = s ? s.name : '';
+  document.getElementById('reminderErr').style.display = 'none';
+}
+async function saveStandaloneReminder() {
+  if (!reminderSelectedSiteId) { document.getElementById('reminderErr').style.display = 'block'; return; }
+  const fu = {
+    id: uid(),
+    aeName: diaryAE(),
+    siteId: reminderSelectedSiteId,
+    originVisitId: null,
+    purpose: document.getElementById('reminderPurpose').value,
+    targetDate: document.getElementById('reminderDate').value || todayStr(),
+    targetTime: document.getElementById('reminderTime').value || '09:00',
+    mode: document.getElementById('reminderMode').value,
+    reason: document.getElementById('reminderReason').value,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+  followups.push(fu);
+  const saved = await persistFollowups();
+  if (!saved) { followups.pop(); return; }
+  document.getElementById('reminderForm').style.display = 'none';
+  renderDiary();
+  showToast('Reminder added to your diary');
+}
+
+function openQueryLogForm() {
+  if (!diaryAE()) { showToast('Select your name first'); return; }
+  document.getElementById('reminderForm').style.display = 'none';
+  queryLogSelectedSiteId = null;
+  queryLogSelectedBmId = null;
+  const form = document.getElementById('queryLogForm');
+  form.innerHTML = `
+    <h4 style="color:var(--navy); font-size:14px; margin:0 0 12px;">Log a telephonic query</h4>
+    ${dealerPickerHtml('queryLogSiteSearch', 'queryLogSiteResults')}
+    <div id="queryLogSelectedSiteDisplay" class="hint"></div>
+    <div id="queryLogBmFieldWrap"></div>
+    <div class="field"><label>What was discussed</label><textarea id="queryLogNotes" placeholder="Brief summary of the call"></textarea></div>
+    <div class="field"><label>Resolution status</label>
+      <select id="queryLogStatus"><option value="resolved">Resolved</option><option value="pending">Pending</option><option value="escalated">Escalated</option></select>
+    </div>
+    <div class="err" id="queryLogErr" style="display:none;">Select a dealer site first</div>
+    <button onclick="saveQueryLog()">Save query log</button>
+    <button class="ghost small" style="margin-top:8px;" onclick="document.getElementById('queryLogForm').style.display='none';">Cancel</button>
+  `;
+  form.style.display = 'block';
+  renderDealerPickerResults('queryLogSiteSearch', 'queryLogSiteResults');
+}
+function selectQueryLogSite(siteId) {
+  queryLogSelectedSiteId = siteId;
+  queryLogSelectedBmId = null;
+  const s = sites.find(x => x.id === siteId);
+  document.getElementById('queryLogSelectedSiteDisplay').textContent = s ? ('Selected: ' + s.name) : '';
+  document.getElementById('queryLogSiteResults').innerHTML = '';
+  document.getElementById('queryLogSiteSearch').value = s ? s.name : '';
+  document.getElementById('queryLogErr').style.display = 'none';
+
+  // Reuse the same group-scoped BM lookup as the visit flow
+  const groupSiteIds = s && s.group ? new Set(sites.filter(x => x.group === s.group).map(x => x.id)) : new Set([siteId]);
+  const bmOptions = bms.filter(b => b.status === 'active' && (b.siteIds || []).some(sid => groupSiteIds.has(sid)));
+  document.getElementById('queryLogBmFieldWrap').innerHTML = `
+    <div class="field"><label>Business manager (optional)</label>
+      <select id="queryLogBm" onchange="queryLogSelectedBmId = this.value">
+        <option value="">Select BM (optional)...</option>
+        ${bmOptions.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
+      </select>
+    </div>
+  `;
+}
+async function saveQueryLog() {
+  if (!queryLogSelectedSiteId) { document.getElementById('queryLogErr').style.display = 'block'; return; }
+  const log = {
+    id: uid(),
+    aeName: diaryAE(),
+    siteId: queryLogSelectedSiteId,
+    bmId: document.getElementById('queryLogBm') ? document.getElementById('queryLogBm').value : '',
+    notes: document.getElementById('queryLogNotes').value,
+    resolutionStatus: document.getElementById('queryLogStatus').value,
+    createdAt: new Date().toISOString(),
+  };
+  queryLogs.push(log);
+  const saved = await persistQueryLogs();
+  if (!saved) { queryLogs.pop(); return; }
+  document.getElementById('queryLogForm').style.display = 'none';
+  renderDiary();
+  showToast('Query logged');
+}
+
+function renderQueryLogList() {
+  const ae = diaryAE();
+  const container = document.getElementById('queryLogList');
+  if (!container) return;
+  if (!ae) { container.innerHTML = ''; return; }
+  const mine = queryLogs.filter(q => q.aeName === ae).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 20);
+  if (mine.length === 0) { container.innerHTML = '<div class="empty">No telephonic queries logged yet.</div>'; return; }
+  container.innerHTML = mine.map(q => {
+    const site = sites.find(s => s.id === q.siteId);
+    const bm = q.bmId ? bms.find(b => b.id === q.bmId) : null;
+    const statusLabel = q.resolutionStatus === 'resolved' ? 'Resolved' : (q.resolutionStatus === 'escalated' ? 'Escalated' : 'Pending');
+    const pillClass = q.resolutionStatus === 'resolved' ? 'good' : (q.resolutionStatus === 'escalated' ? 'warn' : 'pending');
+    return `
+      <div class="diary-item">
+        <div class="dname">${site ? escapeHtml(site.name) : 'Dealer'}${bm ? ' · ' + escapeHtml(bm.name) : ''}</div>
+        <div class="dmeta">${escapeHtml(q.notes || '')}</div>
+        <div class="ddate">${q.createdAt ? new Date(q.createdAt).toLocaleString() : ''} <span class="status-pill ${pillClass}" style="margin-left:6px;">${statusLabel}</span></div>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderDiary() {
+  renderQueryLogList();
   const ae = document.getElementById('diaryAESelect').value;
   const container = document.getElementById('diaryList');
   if (!ae) { container.innerHTML = '<div class="empty">Select your name to see your diary</div>'; return; }
@@ -1997,6 +2206,26 @@ function renderDashboard() {
         <td>${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : '—'}</td>
         <td><span class="badge ${isOpen ? 'inactive' : 'active'}">${isOpen ? 'Open' : 'Resolved'}</span></td>
         <td>${isOpen ? `<button class="small secondary" onclick="resolveEscalation('${e.id}')">Mark resolved</button>` : `<button class="small ghost" onclick="reopenEscalation('${e.id}')">Reopen</button>`}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const myQueryLogs = queryLogs.filter(q => !curAEFilter || q.aeName === curAEFilter);
+  myQueryLogs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const qBody = document.getElementById('dashQueryLogsBody');
+  document.getElementById('dashQueryLogsEmpty').style.display = myQueryLogs.length ? 'none' : 'block';
+  qBody.innerHTML = myQueryLogs.map(q => {
+    const site = sites.find(s => s.id === q.siteId);
+    const bm = q.bmId ? bms.find(b => b.id === q.bmId) : null;
+    const statusLabel = q.resolutionStatus === 'resolved' ? 'Resolved' : (q.resolutionStatus === 'escalated' ? 'Escalated' : 'Pending');
+    return `
+      <tr>
+        <td>${escapeHtml(q.aeName)}</td>
+        <td>${site ? escapeHtml(site.name) : '<em>Deleted site</em>'}</td>
+        <td>${bm ? escapeHtml(bm.name) : '—'}</td>
+        <td style="max-width:260px; white-space:normal;">${escapeHtml(q.notes || '—')}</td>
+        <td>${q.createdAt ? new Date(q.createdAt).toLocaleDateString() : '—'}</td>
+        <td><span class="badge ${q.resolutionStatus === 'resolved' ? 'active' : 'inactive'}" style="${q.resolutionStatus === 'escalated' ? 'background:#FBEAEA;color:var(--red);' : ''}">${statusLabel}</span></td>
       </tr>
     `;
   }).join('');
