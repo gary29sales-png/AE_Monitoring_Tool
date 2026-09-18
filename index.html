@@ -339,6 +339,7 @@
         <div id="arrivalStatus"><span class="status-pill pending">Not checked in yet</span></div>
         <button style="margin-top:10px;" onclick="captureArrival()">Check in — capture location</button>
       </div>
+      <button style="margin-top:6px;" onclick="goFromArrivalStep()">Continue</button>
       <button class="ghost small" style="margin-top:10px;" onclick="goToStep('site')">Back</button>
     </div>
 
@@ -1207,6 +1208,14 @@ function selectSite(siteId) {
   document.getElementById('arrivalSiteName').textContent = s ? s.name : '';
   document.getElementById('siteErr').classList.remove('show');
   goToStep('arrival');
+}
+
+function goFromArrivalStep() {
+  if (!currentVisit.arrival) {
+    showToast('Check in and capture your location first');
+    return;
+  }
+  goToStep('purposes');
 }
 
 function selectVisitType(el) {
